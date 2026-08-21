@@ -1,12 +1,9 @@
 import { Pool } from 'pg';
-import dotenv from 'dotenv';
 
-dotenv.config();
-
+// Ponemos la URL directamente para ignorar Render y su caché
 export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: 'postgresql://postgres.tahmobalaiyvshhxsltz:Megacable23%23@aws-0-us-west-2.pooler.supabase.com:5432/postgres',
   ssl: {
     rejectUnauthorized: false
-  },
-  family: 4 // Forzar IPv4 para evitar que Render intente usar IPv6
+  }
 });
