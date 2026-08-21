@@ -1,8 +1,11 @@
 import { Request, Response } from 'express';
+import { Pool } from 'pg';
 
-// Memoria temporal del servidor para sincronizar viajes entre Cliente y Chofer
-let tripsDB: any[] = [];
-let nextTripId = 100;
+// Configuración de la conexión segura con Supabase
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+});
 
 // 1. Calculador de Tarifa Dinámico
 export const calculateQuote = (req: Request, res: Response) => {
@@ -29,92 +32,95 @@ export const calculateQuote = (req: Request, res: Response) => {
   });
 };
 
-// 2. Solicitud de Viaje (Cliente la crea)
+// 2. Solicitud de Viaje (Guarda directo en Supabase)
 export const requestTrip = async (req: Request, res: Response) => {
   const { vehicleDetails, licensePlate, pickupAddress, destinationAddress, distanceKm, durationMinutes, totalFare, transmission } = req.body;
-  
-  const newTrip = {
-    id: nextTripId++,
-    status: 'requested', // 'requested' | 'assigned' | 'in_progress' | 'completed' | 'cancelled'
-    vehicleDetails: vehicleDetails || 'Auto genérico',
-    licensePlate: licensePlate || 'ABC-123',
-    transmission: transmission || 'automatic',
-    pickup_address: pickupAddress || 'Ubicación actual',
-    destination_address: destinationAddress || 'Destino',
-    distance_km: distanceKm || 10,
-    duration_minutes: durationMinutes || 20,
-    total_fare: totalFare || 250,
-    security_pin: Math.floor(1000 + Math.random() * 9000).toString(), // PIN de 4 dígitos para llaves
-    created_at: new Date().toISOString()
-  };
+  const securityPin = Math.floor(1000 + Math.random() * 9000).toString();
 
-  tripsDB.unshift(newTrip); // Lo ponemos al principio
-  console.log(`🚗 [BACKEND] Nuevo viaje solicitado #${newTrip.id} para ${vehicleDetails} (${licensePlate})`);
+  try {
+    const query = `
+      INSERT INTO trips (status, vehicle_details, license_plate, transmission, pickup_address, destination_address, distance_km, duration_minutes, total_fare, security_pin)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      RETURNING *;
+    `;
+    const values = [
+      'requested',
+      vehicleDetails || 'Auto genérico',
+      licensePlate || 'ABC-123',
+      transmission || 'automatic',
+      pickupAddress || 'Ubicación actual',
+      destinationAddress || 'Destino',
+      distanceKm || 10,
+      durationMinutes || 20,
+      totalFare || 250,
+      securityPin
+    ];
 
-  res.json({ 
-    status: 'success', 
-    trip: newTrip 
-  });
-};
+    const result = await pool.query(query, values);
+    const newTrip = result.rows[0];
 
-// 3. Obtener estado de un viaje específico
-export const getTripById = async (req: Request, res: Response) => {
-  const tripId = parseInt(req.params.id, 10);
-  const trip = tripsDB.find(t => t.id === tripId);
-  if (!trip) {
-    return res.status(404).json({ error: 'Viaje no encontrado' });
+    console.log(`🚗 [SUPABASE] Nuevo viaje #${newTrip.id} guardado en la nube para ${newTrip.vehicle_details}`);
+    res.json({ status: 'success', trip: newTrip });
+  } catch (error) {
+    console.error('Error al guardar viaje en Supabase:', error);
+    res.status(500).json({ status: 'error', message: 'Error al registrar el viaje' });
   }
-  res.json(trip);
 };
 
-// 4. Feed de viajes disponibles para el Chofer
+// 3. Feed de viajes disponibles para el Chofer (Lee de Supabase)
 export const getDriverFeed = async (req: Request, res: Response) => {
-  // Retornamos los viajes que están en estado 'requested'
-  const pendingTrips = tripsDB.filter(t => t.status === 'requested');
-  res.json(pendingTrips);
+  try {
+    const result = await pool.query("SELECT * FROM trips WHERE status = 'requested' ORDER BY created_at DESC");
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error al obtener feed:', error);
+    res.status(500).json([]);
+  }
 };
 
-// 5. El chofer acepta el viaje
+// 4. El chofer acepta el viaje
 export const acceptTrip = async (req: Request, res: Response) => {
   const tripId = parseInt(req.params.id || req.body.tripId, 10);
-  const trip = tripsDB.find(t => t.id === tripId);
-  
-  if (!trip) {
-    return res.status(404).json({ status: 'error', message: 'Viaje no encontrado' });
+  try {
+    const result = await pool.query(
+      "UPDATE trips SET status = 'assigned' WHERE id = $1 RETURNING *;",
+      [tripId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ status: 'error', message: 'Viaje no encontrado' });
+    }
+    console.log(`👨‍✈️ [SUPABASE] Viaje #${tripId} aceptado.`);
+    res.json({ status: 'success', trip: result.rows[0] });
+  } catch (error) {
+    console.error('Error al aceptar viaje:', error);
+    res.status(500).json({ status: 'error', message: 'Error en el servidor' });
   }
-
-  trip.status = 'assigned';
-  console.log(`👨‍✈️ [BACKEND] Viaje #${trip.id} aceptado por el chofer.`);
-  res.json({ status: 'success', trip });
 };
 
-// 6. Cancelar viaje
+// Funciones secundarias
+export const getTripById = async (req: Request, res: Response) => {
+  const tripId = parseInt(req.params.id, 10);
+  const result = await pool.query("SELECT * FROM trips WHERE id = $1", [tripId]);
+  if (result.rows.length === 0) return res.status(404).json({ error: 'No encontrado' });
+  res.json(result.rows[0]);
+};
+
 export const cancelTrip = async (req: Request, res: Response) => {
   const tripId = parseInt(req.params.id || req.body.tripId, 10);
-  const trip = tripsDB.find(t => t.id === tripId);
-  if (trip) {
-    trip.status = 'cancelled';
-  }
-  res.json({ status: 'success', trip });
+  const result = await pool.query("UPDATE trips SET status = 'cancelled' WHERE id = $1 RETURNING *;", [tripId]);
+  res.json({ status: 'success', trip: result.rows[0] });
 };
 
-export const getTripHistory = async (req: Request, res: Response) => { 
-  res.json(tripsDB); 
-};
-
-export const rateTrip = async (req: Request, res: Response) => { 
-  res.json({ status: 'success' }); 
-};
-
-export const verifyPin = async (req: Request, res: Response) => { 
-  res.json({ status: 'success' }); 
-};
-
-export const completeTrip = async (req: Request, res: Response) => { 
+export const completeTrip = async (req: Request, res: Response) => {
   const tripId = parseInt(req.params.id || req.body.tripId, 10);
-  const trip = tripsDB.find(t => t.id === tripId);
-  if (trip) {
-    trip.status = 'completed';
-  }
-  res.json({ status: 'success', trip });
+  const result = await pool.query("UPDATE trips SET status = 'completed' WHERE id = $1 RETURNING *;", [tripId]);
+  res.json({ status: 'success', trip: result.rows[0] });
 };
+
+export const getTripHistory = async (req: Request, res: Response) => {
+  const result = await pool.query("SELECT * FROM trips ORDER BY created_at DESC");
+  res.json(result.rows);
+};
+
+export const rateTrip = async (req: Request, res: Response) => { res.json({ status: 'success' }); };
+export const verifyPin = async (req: Request, res: Response) => { res.json({ status: 'success' }); };
