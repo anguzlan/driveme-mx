@@ -1,24 +1,11 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { Pool } from 'pg';
+import { pool } from './db';
 import tripRoutes from './routes/tripRoutes';
 import { getVehicles, addVehicle, deleteVehicle } from './controllers/vehicleController';
 
 dotenv.config();
-
-console.log("🚩 ¡IGNORANDO ARCHIVOS VIEJOS, CONECTANDO DIRECTO DESDE INDEX (PUERTO 6543)! 🚩");
-
-// Creamos la conexión directamente aquí para evitar fantasmas
-export const pool = new Pool({
-  host: 'aws-0-us-west-2.pooler.supabase.com',
-  port: 6543,
-  user: 'postgres.tahmobalaiyvshhxsltz',
-  password: 'Megacable23#',
-  database: 'postgres',
-  ssl: { rejectUnauthorized: false },
-  family: 4
-});
 
 const app = express();
 const PORT = process.env.PORT || 4000;

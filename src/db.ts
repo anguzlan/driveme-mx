@@ -1,18 +1,15 @@
 import { Pool } from 'pg';
+import dotenv from 'dotenv';
+import dns from 'node:dns';
 
-console.log("🚩 ¡LEYENDO DB.TS CORRECTO! INICIANDO EN PUERTO 6543 🚩");
+// 🚀 EL TRUCO MAESTRO: Obliga a Node.js (Render) a usar IPv4 en toda la aplicación
+dns.setDefaultResultOrder('ipv4first');
 
-// Borrar cualquier variable de entorno de Render que confunda a la base de datos
-delete process.env.PGHOST;
-delete process.env.PGPORT;
-delete process.env.DATABASE_URL;
+dotenv.config();
 
 export const pool = new Pool({
-  host: 'aws-0-us-west-2.pooler.supabase.com',
-  port: 6543,
-  user: 'postgres.tahmobalaiyvshhxsltz',
-  password: 'Megacable23#',
-  database: 'postgres',
-  ssl: { rejectUnauthorized: false },
-  family: 4
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false
+  }
 });
